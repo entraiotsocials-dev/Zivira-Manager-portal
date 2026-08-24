@@ -2,7 +2,7 @@
 import type { TourPlan } from "@zivira/types";
 import { Ban, Check, RefreshCw, Repeat, RotateCcw, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, type ManagerListItem } from "@/lib/api-client";
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   SUBMITTED: { bg: "#fef9c3", color: "#a16207" },
@@ -23,6 +23,10 @@ export function ManagerTourPlans() {
   const [actionTarget, setActionTarget] = useState<{ tp: TourPlan; kind: ActionKind } | null>(null);
   const [reason, setReason] = useState("");
   const [acting, setActing] = useState(false);
+  // Request E, item 1 — reassign now needs a real target manager, picked
+  // from the other active managers in the tenant.
+  const [managers, setManagers] = useState<ManagerListItem[]>([]);
+  const [targetManager, setTargetManager] = useState("");
   // Zivira_prompt.pdf item 13 — Tour Plan tab header gets a "Revoke" action.
   // Revoking an already-APPROVED Tour Plan reuses the existing void
   // endpoint (approved plans currently have no other way to be pulled
@@ -41,6 +45,7 @@ export function ManagerTourPlans() {
 
   useEffect(() => {
     apiClient.dashboard().then(r => setMyEmployeeCode(r.data.manager.employeeCode)).catch(() => {});
+    apiClient.managers().then(r => setManagers(r.data)).catch(() => {});
   }, []);
 
   useEffect(() => { void load(); }, [crossTeam]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -57,9 +62,9 @@ export function ManagerTourPlans() {
     setActing(true); setError("");
     try {
       if (actionTarget.kind === "void" || actionTarget.kind === "revoke") await apiClient.voidTourPlan(actionTarget.tp.tpId, reason);
-      else if (actionTarget.kind === "reassign") await apiClient.reassignTourPlan(actionTarget.tp.tpId, reason);
+      else if (actionTarget.kind === "reassign") await apiClient.reassignTourPlan(actionTarget.tp.tpId, reason, targetManager);
       else await apiClient.rejectTourPlan(actionTarget.tp.tpId, reason);
-      setActionTarget(null); setReason("");
+      setActionTarget(null); setReason(""); setTargetManager("");
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Action failed"); }
     finally { setActing(false); }
@@ -129,16 +134,32 @@ export function ManagerTourPlans() {
             </h3>
             <p style={{ color: "var(--muted)", fontSize: 13, margin: "0 0 12px" }}>
               {actionTarget.tp.employeeName ?? actionTarget.tp.employeeCode} — {actionTarget.tp.month}
-              {actionTarget.kind === "reassign" && " — a brand-new Tour Plan will be created under your approval chain, linked back to this one."}
+              {actionTarget.kind === "reassign" && " — a brand-new Tour Plan will be created under the manager you pick below, linked back to this one. They'll see it in their own Tour Plans queue with Approve/Reject/Void/Reassign available."}
             </p>
+            {actionTarget.kind === "reassign" && (
+              <div className="field">
+                <label>Reassign to (required)</label>
+                <select value={targetManager} onChange={e => setTargetManager(e.target.value)}>
+                  <option value="">Select manager…</option>
+                  {managers.map(m => (
+                    <option key={m.employeeCode} value={m.employeeCode}>
+                      {m.name} ({m.employeeCode}){m.designation ? ` — ${m.designation}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {managers.length === 0 && (
+                  <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>No other active managers found in this tenant yet.</p>
+                )}
+              </div>
+            )}
             <div className="field"><label>Reason {actionTarget.kind !== "reject" && "(required)"}</label>
               <textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="Explain the reason" />
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-              <button className="button button-secondary" onClick={() => { setActionTarget(null); setReason(""); }} type="button">Cancel</button>
+              <button className="button button-secondary" onClick={() => { setActionTarget(null); setReason(""); setTargetManager(""); }} type="button">Cancel</button>
               <button
                 onClick={runAction}
-                disabled={acting || (actionTarget.kind !== "reject" && !reason.trim())}
+                disabled={acting || (actionTarget.kind !== "reject" && !reason.trim()) || (actionTarget.kind === "reassign" && !targetManager)}
                 type="button"
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 18px", borderRadius: 8, border: "none", background: "#ef4444", color: "#fff", fontWeight: 600, fontSize: 14, cursor: "pointer" }}
               >
@@ -197,7 +218,7 @@ export function ManagerTourPlans() {
                         </button>
                       )}
                       {canVoid && (
-                        <button disabled={acting} onClick={() => { setActionTarget({ tp, kind: "reassign" }); setReason(""); }} title="Void & Reassign to me" type="button"
+                        <button disabled={acting} onClick={() => { setActionTarget({ tp, kind: "reassign" }); setReason(""); setTargetManager(""); }} title="Void & Reassign to another manager" type="button"
                           style={{ background: "#7c3aed", border: "none", borderRadius: 6, padding: "5px 8px", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center" }}>
                           <Repeat size={13} />
                         </button>

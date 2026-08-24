@@ -1,6 +1,6 @@
 "use client";
 import clsx from "clsx";
-import { BarChart3, Grid3x3, Home, LogOut, MapPinned, Moon, PanelLeftClose, PanelLeftOpen, Receipt, ShieldAlert, Sun, Users, UsersRound } from "lucide-react";
+import { BarChart3, Bell, Grid3x3, Home, LogOut, MapPinned, Moon, PanelLeftClose, PanelLeftOpen, Receipt, ShieldAlert, Sun, Users, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -23,6 +23,32 @@ export function ManagerShell({ children }: { children: React.ReactNode }) {
   const [theme, setTheme]       = useState<"light"|"dark">("light");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [managerName, setManagerName] = useState<string | null>(null);
+  // Item 3 — a lightweight unread indicator on the topbar bell: true when
+  // GET /manager/notices has anything newer than the last time this
+  // manager opened /manager/notifications. Polled independently of the
+  // notifications page itself so the dot shows up from anywhere in the app.
+  const [hasUnread, setHasUnread] = useState(false);
+
+  useEffect(() => {
+    if (pathname === "/manager/login") return;
+    if (pathname === "/manager/notifications") {
+      window.localStorage.setItem("zivira.manager.notices.lastSeen", new Date().toISOString());
+      setHasUnread(false);
+      return;
+    }
+    let cancelled = false;
+    const check = () => {
+      apiClient.notices().then((r) => {
+        if (cancelled || !r.data.length) return;
+        const lastSeen = window.localStorage.getItem("zivira.manager.notices.lastSeen");
+        const unread = !lastSeen || new Date(r.data[0].createdAt).getTime() > new Date(lastSeen).getTime();
+        setHasUnread(unread);
+      }).catch(() => {});
+    };
+    check();
+    const interval = setInterval(check, 20000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [pathname]);
 
   useEffect(() => {
     const t = window.localStorage.getItem("zivira.manager.theme");
@@ -91,7 +117,23 @@ export function ManagerShell({ children }: { children: React.ReactNode }) {
             </button>
             <div><h1 className="topbar-title">Manager Portal</h1><p className="topbar-subtitle">Zivira Labs · Field Management</p></div>
           </div>
-          <div className="topbar-actions">
+          <div className="topbar-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Link
+              href="/manager/notifications"
+              className="button button-secondary"
+              style={{ position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+              title="Notifications"
+            >
+              <Bell size={16} />
+              {hasUnread && (
+                <span
+                  style={{
+                    position: "absolute", top: -2, right: -2, width: 8, height: 8,
+                    borderRadius: "50%", background: "var(--red, #e53e3e)"
+                  }}
+                />
+              )}
+            </Link>
             <span className="badge"><Users size={15} /> {managerName ?? "Manager"}</span>
           </div>
         </header>

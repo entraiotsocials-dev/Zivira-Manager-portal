@@ -1,5 +1,28 @@
 import type { ApiEnvelope, CompanyDashboard, DcrExtended, Doctor, Employee, ManagerDashboard, Product, TourPlan, VisitCoverageGrid, ExpenseClaim, ComplianceResponse, EmployeeComplianceRow, PayrollResponse, PayrollStatusRecord, RepManagerTeamResponse, RepAnalysisRow } from "@zivira/types";
 
+// Item 3 — real cross-portal notifications for the Manager portal. Not
+// (yet) part of the shared @zivira/types package, so declared locally here
+// — mirrors serializeDocument() over the backend's Notice model
+// (src/models/notice.model.ts) via GET /manager/notices.
+export type ManagerNotice = {
+  id: string;
+  title: string;
+  message: string;
+  audience: "ALL" | "MR" | "MANAGER" | "ADMIN";
+  priority: "NORMAL" | "URGENT";
+  postedBy?: string | null;
+  targetEmployeeCode?: string | null;
+  createdAt: string;
+};
+
+// Request E, item 1 — every other active manager in the tenant, for the
+// Tour Plan reassign modal's manager picker. Via GET /manager/managers.
+export type ManagerListItem = {
+  employeeCode: string;
+  name: string;
+  designation?: string | null;
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://zivira-labs-backend-1.onrender.com/api";
 const TOKEN_KEY = "zivira.manager.token";
 
@@ -22,6 +45,11 @@ export const apiClient = {
   login: (username: string, password: string) =>
     request<{ token: string }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password, portal: "FIELD_FORCE" }) }),
   dashboard: () => request<ManagerDashboard>("/manager/dashboard"),
+  // Item 3 — real notifications: tenant-wide Admin broadcasts plus notices
+  // targeted at this manager (another manager voiding/reassigning one of
+  // their Tour Plans). `since` (ISO timestamp) lets the notifications page
+  // poll for only what's new.
+  notices: (since?: string) => request<ManagerNotice[]>(`/manager/notices${since ? `?since=${encodeURIComponent(since)}` : ""}`),
   team:      () => request<Employee[]>("/manager/team"),
   createTeamMember: (input: Omit<Employee, "id" | "tenantSlug" | "createdAt" | "updatedAt" | "reportingManager"> & { password?: string }) =>
     request<Employee & { demoPassword?: string }>("/manager/team", { method: "POST", body: JSON.stringify(input) }),
@@ -43,8 +71,12 @@ export const apiClient = {
   approveTourPlan: (tpId: string) => request<TourPlan>(`/manager/tour-plans/${tpId}/approve`, { method: "PATCH" }),
   rejectTourPlan: (tpId: string, reason?: string) => request<TourPlan>(`/manager/tour-plans/${tpId}/reject`, { method: "PATCH", body: JSON.stringify({ reason }) }),
   voidTourPlan: (tpId: string, reason: string) => request<TourPlan>(`/manager/tour-plans/${tpId}/void`, { method: "PATCH", body: JSON.stringify({ reason }) }),
-  reassignTourPlan: (tpId: string, reason: string) =>
-    request<{ original: TourPlan; created: TourPlan }>(`/manager/tour-plans/${tpId}/reassign`, { method: "POST", body: JSON.stringify({ reason }) }),
+  // Request E, item 1 — reassign must actually redirect the Tour Plan to
+  // whichever manager the caller picks (targetManager: code or name),
+  // instead of silently recreating it under the caller themselves.
+  reassignTourPlan: (tpId: string, reason: string, targetManager: string) =>
+    request<{ original: TourPlan; created: TourPlan }>(`/manager/tour-plans/${tpId}/reassign`, { method: "POST", body: JSON.stringify({ reason, targetManager }) }),
+  managers: () => request<ManagerListItem[]>("/manager/managers"),
 
   // PRD 12.2 — Visit Coverage grid
   visitCoverage: (month?: string) => request<VisitCoverageGrid>(`/manager/visit-coverage${month ? `?month=${month}` : ""}`),
